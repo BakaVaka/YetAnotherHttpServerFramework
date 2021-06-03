@@ -13,6 +13,8 @@ namespace YetAnotherHttpServerFramework
     {
         private readonly IPEndPoint _ipEndPoint;
         private readonly int _serverTasksCount;
+        private readonly HttpResponse _badRequest;
+        private readonly HttpResponse _helloWorldResposne;
 
         public HttpServer(IPEndPoint ipEndPoint, int serverTaksCount = 1)
         {
@@ -20,8 +22,17 @@ namespace YetAnotherHttpServerFramework
             {
                 throw new ArgumentException("Invalid task count");
             }
-            _ipEndPoint = ipEndPoint;
+            _ipEndPoint = ipEndPoint ?? throw new ArgumentNullException(nameof(ipEndPoint));
             _serverTasksCount = serverTaksCount;
+            _badRequest = new HttpResponse()
+                .UseStatusCode(400)
+                .UseReason("Bad Request");
+
+            _helloWorldResposne = new HttpResponse()
+                .UseStatusCode(200)
+                .UseReason("OK")
+                .UseHeader("Content-Type", "text/html")
+                .UseBody("<h1>Hello world!!!</h1>");
         }
 
         public async Task RunAsync()
@@ -54,30 +65,27 @@ namespace YetAnotherHttpServerFramework
 
         private async Task ProcessClient(Socket client)
         {
-            using NetworkStream clientStream = new(client);
-            using StreamReader streamReader = new(clientStream);
-            StringBuilder requestBuffer = new();
-            do
+            using (client)
             {
-                var requestString = await streamReader.ReadLineAsync();
-                if (requestString.Length == 0) { break; }
-                requestBuffer.AppendLine(requestString);
-            } while (true);
+                using NetworkStream clientStream = new(client);
+                using StreamReader streamReader = new(clientStream);
+                StringBuilder requestBuffer = new();
+                do
+                {
+                    var requestString = await streamReader.ReadLineAsync();
+                    if (requestString is null || requestString.Length == 0) { break; }
+                    requestBuffer.AppendLine(requestString);
+                } while (true);
 
-            var isValidRequest = TryParseRequest(requestBuffer, out var request);
-            if (!isValidRequest)
-            {
-                var response1 = "HTTP/1.1 500 Internal";
-                await client.SendAsync(Encoding.UTF8.GetBytes(response1), SocketFlags.None);
+                if (!TryParseRequest(requestBuffer, out var request))
+                {
+                    await client.SendAsync(Encoding.UTF8.GetBytes(_badRequest.Print()), SocketFlags.None);
+                    return;
+                }
+                await client.SendAsync(Encoding.UTF8.GetBytes(_helloWorldResposne.Print()), SocketFlags.None);
                 client.Dispose();
-                return;
-            }
-
-            var response = "HTTP/1.1 200 OK\r\n\r\nHello";
-            await client.SendAsync(Encoding.UTF8.GetBytes(response), SocketFlags.None);
-            client.Dispose();
+            }           
         }
-
         private bool TryParseRequest(StringBuilder requestString, out HttpRequest request)
         {
             request = default;
@@ -108,14 +116,5 @@ namespace YetAnotherHttpServerFramework
             }
             return headers;
         }
-    }
-    public class HttpRequest
-    {
-        public string Method { get; set; }
-        public string Protocol { get; set; }
-        public string Path { get; set; }
-        public string Query { get; set; }
-        public Dictionary<string, string> Headers { get; set; } = new();
-        public string Body { get; set; }
     }
 }
